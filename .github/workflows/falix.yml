@@ -7,7 +7,7 @@ on:
         description: '指定邮箱（留空全部，多个用逗号）'
         required: false
   schedule:
-  - cron: '0 */6 * * *'  # 每 6 小时执行一次
+    - cron: '0 */6 * * *'  # 每 6 小时自动执行一次
 
 jobs:
   restart:
@@ -70,6 +70,7 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           HY2_URL: ${{ secrets.HY2_URL }}
+          AD_RETRY_LIMIT: ${{ secrets.AD_RETRY_LIMIT }}  # 关键修复：传递变量给 Python
         run: |
           # 根据是否有 HY2_URL 设置代理
           if [ -n "$HY2_URL" ]; then
@@ -80,15 +81,6 @@ jobs:
           fi
           
           python main.py
-
-#      - name: 上传截图
-#        if: always()
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: screenshots-${{ github.run_number }}
-#          path: output/falix/*.png
-#          retention-days: 7
-#          if-no-files-found: ignore
 
       - name: 清理运行记录
         if: always()
