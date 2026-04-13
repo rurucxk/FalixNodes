@@ -19,8 +19,10 @@ BASE_URL = "https://client.falixnodes.net"
 LOGIN_URL = f"{BASE_URL}/auth/login"
 OUTPUT_DIR = Path("output/falix")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 MAX_RETRY = 3
-AD_RETRY_LIMIT = 10  # Start 重试次数
+# 关键修复 1：正确读取环境变量，如果没设置则默认为 10
+AD_RETRY_LIMIT = int(os.environ.get("AD_RETRY_LIMIT", 10)) 
 CN_TZ = timezone(timedelta(hours=8))
 
 screenshot_counter = {"count": 0}
@@ -226,14 +228,38 @@ def handle_turnstile(sb, timeout=30) -> bool:
 
 # ---------- 处理广告弹窗 ----------
 def handle_ad_modal(sb, server_id: str) -> bool:
-    """检测广告弹窗，如果存在则刷新"""
+    """关键修复 2：检测广告弹窗，尝试点击观看并等待结束"""
     try:
+        # 这里的 #adModal 是根据之前代码推测的，如果有变更可以调整
         if sb.is_element_visible("#adModal", timeout=2):
-            print("[WARN] 检测到广告弹窗")
-            shot(sb, f"ad-{server_id[:8]}")
-            sb.refresh()
-            time.sleep(3)
-            return True
+            print("[WARN] 检测到强制广告弹窗，准备尝试观看...")
+            shot(sb, f"ad-detected-{server_id[:8]}")
+            
+            try:
+                # 尝试精准点击 "Watch Ad" 的按钮
+                print("[INFO] 正在寻找并点击 Watch Ad 按钮...")
+                sb.click('button:contains("Watch Ad"), #adModal button.btn-primary', timeout=5)
+                
+                # 广告通常需要 30 秒左右，这里强制挂起等待 35 秒
+                print("[INFO] 广告已触发，强制等待 35 秒让广告播完...")
+                time.sleep(35)
+                
+                # 有些广告播完需要点右上角的叉号，尝试盲点一下潜在的关闭按钮
+                try:
+                    sb.click('.ad-close-button, #adModal button.close', timeout=2)
+                    print("[INFO] 尝试关闭广告弹窗...")
+                    time.sleep(2)
+                except:
+                    pass
+                
+                return True
+                
+            except Exception as e:
+                print(f"[ERROR] 无法点击看广告按钮，退回刷新策略: {e}")
+                # 如果找不到点击按钮，只能退回到旧版的刷新策略
+                sb.refresh()
+                time.sleep(3)
+                return True
     except:
         pass
     return False
@@ -299,7 +325,6 @@ def fetch_servers_from_page(sb, email: str) -> Tuple[List[Dict], str]:
                 except:
                     pass
                 
-                # 修改：不打印完整ID
                 print(f"[INFO] 服务器 {idx+1}: {name}")
                 
                 servers.append({
@@ -328,10 +353,12 @@ def check_and_restart_server(sb, server_id: str, server_name: str) -> Tuple[bool
     server_id_short = server_id[:8]
     last_shot = ""
 
+    print(f"[INFO] 当前设置的 AD_RETRY_LIMIT (重试上限) 为: {AD_RETRY_LIMIT}")
+
     for attempt in range(AD_RETRY_LIMIT):
         sb.open(console_url)
         
-        # 修改：添加随机延时 0-5秒
+        # 添加随机延时 0-5秒
         delay = random.uniform(0, 5)
         print(f"[INFO] 随机延时 {delay:.1f}s")
         time.sleep(delay)
@@ -366,8 +393,9 @@ def check_and_restart_server(sb, server_id: str, server_name: str) -> Tuple[bool
             last_shot = shot(sb, f"click-fail-{server_id_short}")
             pass
 
-        # 处理广告
+        # 检查是否因为点击 Start 触发了广告弹窗
         if handle_ad_modal(sb, server_id):
+            print("[INFO] 正在走广告处理流程，返回循环重试...")
             continue
 
         # 再次检查状态
@@ -383,7 +411,7 @@ def check_and_restart_server(sb, server_id: str, server_name: str) -> Tuple[bool
         # 继续重试前等待一下
         time.sleep(3)
 
-    print(f"[ERROR] {server_name} 重启失败（达到重试上限）")
+    print(f"[ERROR] {server_name} 重启失败（已达到重试上限 {AD_RETRY_LIMIT} 次）")
     last_shot = shot(sb, f"fail-{server_id_short}")
     return False, "重启失败", last_shot
 
